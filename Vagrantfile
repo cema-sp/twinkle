@@ -12,7 +12,7 @@ Vagrant.configure(2) do |config|
 
   # Every Vagrant development environment requires a box. You can search for
   # boxes at https://atlas.hashicorp.com/search.
-  config.vm.box = "ubuntu/trusty64"
+  # config.vm.box = "ubuntu/trusty64"
 
   # Disable automatic box update checking. If you disable this, then
   # boxes will only be checked for updates when the user runs
@@ -22,7 +22,7 @@ Vagrant.configure(2) do |config|
   # Create a forwarded port mapping which allows access to a specific port
   # within the machine from a port on the host machine. In the example below,
   # accessing "localhost:8080" will access port 80 on the guest machine.
-  config.vm.network "forwarded_port", guest: 27017, host: 27017
+  # config.vm.network "forwarded_port", guest: 27017, host: 27017
 
   # Create a private network, which allows host-only access to the machine
   # using a specific IP.
@@ -64,15 +64,30 @@ Vagrant.configure(2) do |config|
   # Enable provisioning with a shell script. Additional provisioners such as
   # Puppet, Chef, Ansible, Salt, and Docker are also available. Please see the
   # documentation for more information about their specific syntax and use.
-  config.vm.provision "shell", inline: <<-SHELL
-    sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
-    echo "deb http://repo.mongodb.org/apt/ubuntu "$(lsb_release -sc)"/mongodb-org/3.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-3.0.list
-    sudo apt-get update
-    sudo locale-gen
-    # export LC_ALL=C
-    sudo apt-get install -y mongodb-org
-    sudo sed -i 's/bind_ip/#bind_ip/' /etc/mongod.conf
-    sudo sed -i 's/#verbose/verbose/' /etc/mongod.conf
-    sudo service mongod restart
-  SHELL
+
+  config.vm.define "mongo" do |mongo|
+    mongo.vm.box = "ubuntu/trusty64"
+    mongo.vm.network "private_network", ip: "192.168.33.10"
+    # mongo.vm.network "forwarded_port", guest: 27017, host: 27017
+    mongo.vm.provision "shell", inline: <<-SHELL
+      sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
+      echo "deb http://repo.mongodb.org/apt/ubuntu "$(lsb_release -sc)"/mongodb-org/3.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-3.0.list
+      sudo apt-get update
+      sudo locale-gen
+      # export LC_ALL=C
+      sudo apt-get install -y mongodb-org
+      sudo sed -i 's/bind_ip/#bind_ip/' /etc/mongod.conf
+      sudo sed -i 's/#verbose/verbose/' /etc/mongod.conf
+      sudo service mongod restart
+    SHELL
+  end
+
+  # config.vm.define "go" do |go|
+  #   go.vm.box = "ubuntu/trusty64"
+  #   go.vm.network "private_network", ip: "192.168.33.11"
+  #   go.vm.provision "shell", inline: <<-SHELL
+  #     wget https://storage.googleapis.com/golang/go1.4.2.linux-amd64.tar.gz
+  #   SHELL
+  # end
+
 end
