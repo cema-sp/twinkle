@@ -1,10 +1,14 @@
 package main
 
 import (
-	// "fmt"
+	"fmt"
 	"net/http"
 	"log"
 	"io/ioutil"
+  "regexp"
+  "strings"
+  "errors"
+  // "html/template"
 )
 
 // type PostHandler struct {}
@@ -46,6 +50,11 @@ func handlePost(rw http.ResponseWriter, req *http.Request) {
     return
 	}
 
+  file, fileHeader, err := req.FormFile("imageFile")
+  if err != nil {
+    log.Println(err)
+    return
+  }
 
   if err = matchContentType(
     fileHeader.Header["Content-Type"],
@@ -53,17 +62,20 @@ func handlePost(rw http.ResponseWriter, req *http.Request) {
     log.Println(err)
     return
   }
+
+	var image []byte
+	image, err = ioutil.ReadAll(file)
     if err != nil {
       log.Println(err)
       return
     }
 
-    if len(body) == 0 {
+    if len(image) == 0 {
     	log.Println("Body length: 0")
       return
     }
 
-	log.Println(string(body))
+	log.Println("Body: ", len(image), http.DetectContentType(image))
 }
 
 func main() {
