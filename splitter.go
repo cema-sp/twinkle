@@ -50,6 +50,9 @@ func handlePost(rw http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-    http.HandleFunc("/split", handlePost)
-    log.Fatal(http.ListenAndServe(":8080", nil))
+  http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    http.ServeFile(w, r, "form.html")
+  })
+  http.HandleFunc("/split", handlePost)
+  log.Fatal(http.ListenAndServe(":8080", nil))
 }
