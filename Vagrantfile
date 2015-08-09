@@ -94,7 +94,11 @@ Vagrant.configure(2) do |config|
       sudo locale-gen
       sudo apt-get install -y imagemagick libmagickwand-dev git
       pkg-config --cflags --libs MagickWand
-      go get github.com/gographics/imagick/imagick
+      mkdir -p /home/vagrant/go/src/github.com/cema-sp/
+      ln -s /vagrant /home/vagrant/go/src/github.com/cema-sp/twinkle
+      cd /home/vagrant/go/src/github.com/cema-sp/twinkle
+      # go get github.com/gographics/imagick/imagick
+      go get -t ./...
     SHELL
   end
 
