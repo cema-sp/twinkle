@@ -1,2 +1,6 @@
 # Vagrant dir
 .vagrant
+
+# Temporary dir
+tmp/*
+!tmp/.gitkeep
