@@ -10,7 +10,9 @@ import (
 	"regexp"
 	// "runtime"
 	"math/rand"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	// "html/template"
 )
@@ -43,7 +45,7 @@ func matchContentType(ct []string, matching string) error {
 	return nil
 }
 
-func handlePost(rw http.ResponseWriter, req *http.Request) {
+func handlePost(imagesChan chan []byte, rw http.ResponseWriter, req *http.Request) {
 	var err error
 	if req.Method != "POST" {
 		log.Println("Wrong method: ", req.Method)
@@ -100,13 +102,14 @@ func handlePost(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	maskingChan := make(chan []int)
-	if err = scheduleMasking(image, maskingChan); err != nil {
-		log.Println(err)
-		return
-	}
+	imagesChan <- image
 
-	log.Println("Image saved: ", len(image))
+	// if err = scheduleChunking(image); err != nil {
+	// 	log.Println(err)
+	// 	return
+	// }
+
+	log.Println("Chunking scheduled: ", len(image))
 }
 
 func calcDnR(image *imagick.MagickWand) (d uint, r float64) {
@@ -140,23 +143,20 @@ func createMask(d uint, r float64) (mask *imagick.MagickWand) {
 	return
 }
 
-func createChunk(
-	mask imagick.MagickWand,
-	image *imagick.MagickWand,
-	x, y int,
-) (*imagick.MagickWand, error) {
-
-	if err := mask.CompositeImage(image, imagick.COMPOSITE_OP_SRC_IN, x, y); err != nil {
-		return nil, err
+func createChunk(mask, image *imagick.MagickWand, x, y int) error {
+	if err := mask.CompositeImage(image, imagick.COMPOSITE_OP_SRC_IN, -x, -y); err != nil {
+		return err
+		// fmt.Sprintf("Chunking for (%d;%d) failed: %v", x, y, err)
 	}
 
-	if err := mask.WriteImage("tmp/" + string(x) + "_" + string(y) + ".png"); err != nil {
-		return nil, err
+	if err := mask.WriteImage("tmp/" + strconv.Itoa(x) + "_" + strconv.Itoa(y) + ".png"); err != nil {
+		return err
+		// fmt.Sprintf("Saving chunk for (%d;%d) failed: %v", x, y, err)
 	}
-	return &mask, nil
+	return nil
 }
 
-func scheduleMasking(imageBytes []byte, maskingChan chan []int) error {
+func scheduleChunking(imageBytes []byte) error {
 	// outputFileName := "tmp/tmp.jpeg"
 
 	image := imagick.NewMagickWand()
@@ -170,24 +170,22 @@ func scheduleMasking(imageBytes []byte, maskingChan chan []int) error {
 	mask := createMask(d, r)
 	defer mask.Destroy()
 
+	// TODO: Profile it, mb faster in consequence
+	var chunkers sync.WaitGroup
 	for i := 0; i < maxImageChunks; i++ {
-		x := rand.Intn(int(image.GetImageWidth()))
-		y := rand.Intn(int(image.GetImageHeight()))
+		x := rand.Intn(int(image.GetImageWidth() - d))
+		y := rand.Intn(int(image.GetImageHeight() - d))
 
-		maskingChan <- []int{x, y}
+		chunkers.Add(1)
+		go func() {
+			defer chunkers.Done()
 
-		log.Println("x: ", x, " y: ", y)
+			if err := createChunk(mask.Clone(), image, x, y); err != nil {
+				log.Println(fmt.Sprintf("Chunking for (%d;%d) failed: %v", x, y, err))
+			}
+		}()
 	}
-
-	for i := 0; i < maxImageChunks; i++ {
-		xy := <-maskingChan
-		go createChunk(*mask, image, xy[0], xy[1])
-	}
-
-	// for i := 0; i < maxImageChunks; i++ {
-	// 	log.Println(i)
-	// }
-
+	chunkers.Wait()
 	return nil
 }
 
@@ -202,10 +200,17 @@ func main() {
 	imagick.Initialize()
 	defer imagick.Terminate()
 
+	imagesChan := make(chan []byte)
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "form.html")
 	})
-	http.HandleFunc("/split", handlePost)
+	http.HandleFunc("/split", func(w http.ResponseWriter, r *http.Request) {
+		handlePost(imagesChan, w, r)
+	})
+	// http.HandleFunc("/split", handlePost)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
+
+	log.Println("Started")
 }
