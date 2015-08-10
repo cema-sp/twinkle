@@ -84,20 +84,19 @@ Vagrant.configure(2) do |config|
   config.vm.define "go" do |go|
     go.vm.box = "ubuntu/trusty64"
     go.vm.network "private_network", ip: "192.168.33.11"
+    go.vm.synced_folder ".", "/home/vagrant/go/src/github.com/cema-sp/twinkle"
     go.vm.provision "shell", inline: <<-SHELL
-      wget https://storage.googleapis.com/golang/go1.4.2.linux-amd64.tar.gz -O - | tar -C /usr/local -xz
-      echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee -a /etc/profile
-      echo 'export GOROOT=/usr/local/go/' | sudo tee -a /etc/profile
-      echo 'export GOPATH=$HOME/go/' | sudo tee -a /etc/profile
+      wget -q https://storage.googleapis.com/golang/go1.4.2.linux-amd64.tar.gz -O - | tar -C /usr/local -xz
+      echo "export PATH=$PATH:/usr/local/go/bin" | sudo tee -a /etc/profile
+      echo "export GOROOT=/usr/local/go/" | sudo tee -a /etc/profile
+      echo "export GOPATH=/home/vagrant/go/" | sudo tee -a /etc/profile
       source /etc/profile
       sudo apt-get update
       sudo locale-gen
       sudo apt-get install -y imagemagick libmagickwand-dev git
       pkg-config --cflags --libs MagickWand
       mkdir -p /home/vagrant/go/src/github.com/cema-sp/
-      ln -s /vagrant /home/vagrant/go/src/github.com/cema-sp/twinkle
       cd /home/vagrant/go/src/github.com/cema-sp/twinkle
-      # go get github.com/gographics/imagick/imagick
       go get -t ./...
     SHELL
   end
