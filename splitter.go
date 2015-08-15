@@ -1,19 +1,22 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"github.com/gographics/imagick/imagick"
+	"html/template"
 	"io/ioutil"
 	"log"
+	"math/big"
 	"net/http"
 	"regexp"
-	// "runtime"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	// "runtime"
 	// "html/template"
 )
 
@@ -27,6 +30,13 @@ const (
 	htmlFormFileField = "imageFile"
 	maxImageChunks    = 16
 	minChunksPerSide  = 4
+	chunkersCnt       = 1
+	tokenSize         = 32
+	tokenExpiration   = 5 // in minutes
+)
+
+var (
+	tokenStore map[string]time.Time = make(map[string]time.Time)
 )
 
 func matchContentType(ct []string, matching string) error {
@@ -47,10 +57,6 @@ func matchContentType(ct []string, matching string) error {
 
 func handlePost(imagesChan chan []byte, rw http.ResponseWriter, req *http.Request) {
 	var err error
-	if req.Method != "POST" {
-		log.Println("Wrong method: ", req.Method)
-		return
-	}
 
 	if err = matchContentType(
 		req.Header["Content-Type"],
@@ -156,42 +162,72 @@ func createChunk(mask, image *imagick.MagickWand, x, y int) error {
 	return nil
 }
 
-func scheduleChunking(imageBytes []byte) error {
-	// outputFileName := "tmp/tmp.jpeg"
+func scheduleChunking(imagesChan chan []byte) error {
+	for imageBytes := range imagesChan {
+		image := imagick.NewMagickWand()
+		defer image.Destroy()
 
-	image := imagick.NewMagickWand()
-	defer image.Destroy()
+		if err := image.ReadImageBlob(imageBytes); err != nil {
+			return err
+		}
 
-	if err := image.ReadImageBlob(imageBytes); err != nil {
-		return err
-	}
+		d, r := calcDnR(image)
+		mask := createMask(d, r)
+		defer mask.Destroy()
 
-	d, r := calcDnR(image)
-	mask := createMask(d, r)
-	defer mask.Destroy()
-
-	// TODO: Profile it, mb faster in consequence
-	var chunkers sync.WaitGroup
-	for i := 0; i < maxImageChunks; i++ {
-		x := rand.Intn(int(image.GetImageWidth() - d))
-		y := rand.Intn(int(image.GetImageHeight() - d))
-
-		chunkers.Add(1)
-		go func() {
-			defer chunkers.Done()
-
-			if err := createChunk(mask.Clone(), image, x, y); err != nil {
-				log.Println(fmt.Sprintf("Chunking for (%d;%d) failed: %v", x, y, err))
+		// TODO: Profile it, mb faster in consequence
+		var chunkers sync.WaitGroup
+		for i := 0; i < maxImageChunks; i++ {
+			x, err := rand.Int(rand.Reader, big.NewInt(int64(image.GetImageWidth()-d)))
+			if err != nil {
+				log.Println(err)
+				continue
 			}
-		}()
+			y, err := rand.Int(rand.Reader, big.NewInt(int64(image.GetImageHeight()-d)))
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
+			chunkers.Add(1)
+			go func() {
+				defer chunkers.Done()
+
+				if err := createChunk(mask.Clone(), image, int(x.Int64()), int(y.Int64())); err != nil {
+					log.Println(fmt.Sprintf("Chunking for (%d;%d) failed: %v", x, y, err))
+				}
+			}()
+		}
+		chunkers.Wait()
 	}
-	chunkers.Wait()
+
 	return nil
+}
+
+func serveStaticFile(pattern string, filename string) {
+	http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filename)
+	})
+}
+
+func generateToken() (t string, err error) {
+	randBytes := make([]byte, tokenSize)
+
+	_, err = rand.Read(randBytes)
+	if err != nil {
+		return
+	}
+
+	t = base64.URLEncoding.EncodeToString(randBytes)
+	tokenStore[t] = time.Now().Add(tokenExpiration * time.Minute)
+	log.Println(tokenStore)
+	log.Println(time.Now())
+	return
 }
 
 func init() {
 	// TODO: Stronger Rand
-	rand.Seed(time.Now().UTC().UnixNano())
+	// rand.Seed(time.Now().UTC().UnixNano())
 	// Use all CPUs (TODO: Profile it)
 	// runtime.GOMAXPROCS(runtime.NumCPU())
 }
@@ -202,15 +238,38 @@ func main() {
 
 	imagesChan := make(chan []byte)
 
+	for i := 0; i < chunkersCnt; i++ {
+		go scheduleChunking(imagesChan)
+	}
+
+	// Serve Assets
+	http.Handle("/assets", http.FileServer(http.Dir("./assets/")))
+
+	// TODO: check for / without suffix
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "form.html")
-	})
-	http.HandleFunc("/split", func(w http.ResponseWriter, r *http.Request) {
-		handlePost(imagesChan, w, r)
-	})
-	// http.HandleFunc("/split", handlePost)
+		switch r.Method {
+		case "POST":
+			handlePost(imagesChan, w, r)
+		case "GET":
+			// TODO: function
+			token, err := generateToken()
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), 500)
+			}
 
+			tmpl, err := template.ParseFiles("index.html")
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), 500)
+			}
+			tmpl.Execute(w, token)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	})
+
+	log.Println("Server started")
 	log.Fatal(http.ListenAndServe(":8080", nil))
-
-	log.Println("Started")
 }
