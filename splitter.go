@@ -57,6 +57,22 @@ func matchContentType(ct []string, matching string) error {
 	return nil
 }
 
+func handleGetIndex(w http.ResponseWriter, r *http.Request) {
+	token, err := generateToken()
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), 500)
+	}
+
+	tmpl, err := template.ParseFiles("index.html")
+	if err != nil {
+		log.Println(err)
+		http.Error(w, err.Error(), 500)
+	}
+
+	tmpl.Execute(w, token)
+}
+
 func handlePost(imagesChan chan []byte, rw http.ResponseWriter, req *http.Request) {
 	var err error
 
@@ -288,27 +304,15 @@ func main() {
 	http.Handle("/fonts/", http.FileServer(http.Dir("./assets")))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case "POST":
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/":
 			handlePost(imagesChan, w, r)
-		case "GET":
-			// TODO: function
-			token, err := generateToken()
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), 500)
-			}
-
-			tmpl, err := template.ParseFiles("index.html")
-			if err != nil {
-				log.Println(err)
-				http.Error(w, err.Error(), 500)
-			}
-			tmpl.Execute(w, token)
+		case r.Method == "GET" && r.URL.Path == "/":
+			handleGetIndex(w, r)
 		default:
+			log.Println("404: ", r.URL.Path)
 			http.NotFound(w, r)
 		}
-		return
 	})
 
 	log.Println("Server started")
