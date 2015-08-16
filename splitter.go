@@ -243,7 +243,9 @@ func main() {
 	}
 
 	// Serve Assets
-	http.Handle("/assets", http.FileServer(http.Dir("./assets/")))
+	http.Handle("/css/", http.FileServer(http.Dir("./assets")))
+	http.Handle("/js/", http.FileServer(http.Dir("./assets")))
+	http.Handle("/fonts/", http.FileServer(http.Dir("./assets")))
 
 	// TODO: check for / without suffix
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
