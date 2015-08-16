@@ -16,27 +16,29 @@ import (
 	"strings"
 	"sync"
 	"time"
+	// "github.com/cema-sp/twinkle"
 	// "runtime"
-	// "html/template"
 )
 
 // type PostHandler struct {}
-
 // func (h PostHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {}
 
 // TODO: Configuration in ENV
 const (
-	maxImageSize      = 8 << 20 // 4 Mb
-	htmlFormFileField = "imageFile"
-	maxImageChunks    = 16
-	minChunksPerSide  = 4
-	chunkersCnt       = 1
-	tokenSize         = 32
-	tokenExpiration   = 5 // in minutes
+	maxImageSize       = (4 * 2) << 20    // 4 Mb
+	htmlFormFileField  = "imageFile"      // image field name
+	htmlFormTokenField = "token"          // token field name
+	maxImageChunks     = 16               // chunks amount
+	minChunksPerSide   = 4                // for chunks radius calculation
+	chunkersCnt        = 1                // # of workers
+	tokenSize          = 4                // length of token
+	tokenExpiration    = 5 * time.Minute  // token validity time
+	tokenDestroy       = 10 * time.Minute // token live time
+	tokenCleanup       = 5 * time.Minute  // token store cleanup frequency
 )
 
 var (
-	tokenStore map[string]time.Time = make(map[string]time.Time)
+	tokenStore map[string]time.Time
 )
 
 func matchContentType(ct []string, matching string) error {
@@ -76,6 +78,16 @@ func handlePost(imagesChan chan []byte, rw http.ResponseWriter, req *http.Reques
 		return
 	}
 
+	token := req.FormValue(htmlFormTokenField)
+	err = validateToken(token)
+	if err != nil {
+		log.Println(err)
+		return
+	} else {
+		log.Println("Token is ok")
+		return
+	}
+
 	file, fileHandler, err := req.FormFile(htmlFormFileField)
 	if err != nil {
 		log.Println(err)
@@ -90,8 +102,6 @@ func handlePost(imagesChan chan []byte, rw http.ResponseWriter, req *http.Reques
 		log.Println(err)
 		return
 	}
-
-	// log.Println(fileHandler.Header)
 
 	var image []byte
 	image, err = ioutil.ReadAll(file)
@@ -109,11 +119,6 @@ func handlePost(imagesChan chan []byte, rw http.ResponseWriter, req *http.Reques
 	}
 
 	imagesChan <- image
-
-	// if err = scheduleChunking(image); err != nil {
-	// 	log.Println(err)
-	// 	return
-	// }
 
 	log.Println("Chunking scheduled: ", len(image))
 }
@@ -219,10 +224,40 @@ func generateToken() (t string, err error) {
 	}
 
 	t = base64.URLEncoding.EncodeToString(randBytes)
-	tokenStore[t] = time.Now().Add(tokenExpiration * time.Minute)
-	log.Println(tokenStore)
-	log.Println(time.Now())
+	if _, ok := tokenStore[t]; ok {
+		t, err = generateToken()
+		return
+	}
+
+	tokenStore[t] = time.Now().Add(tokenExpiration)
 	return
+}
+
+func validateToken(token string) error {
+	expires, ok := tokenStore[token]
+	if !ok {
+		err := ErrTokenNotFound(token)
+		return &err
+	}
+
+	delete(tokenStore, token)
+
+	if time.Now().After(expires) {
+		err := ErrTokenExpired(token)
+		return &err
+	}
+
+	return nil
+}
+
+func tokenStoreCleaner(c <-chan time.Time) {
+	for _ = range c {
+		for key, exp := range tokenStore {
+			if time.Now().After(exp) {
+				delete(tokenStore, key)
+			}
+		}
+	}
 }
 
 func init() {
@@ -230,24 +265,28 @@ func init() {
 	// rand.Seed(time.Now().UTC().UnixNano())
 	// Use all CPUs (TODO: Profile it)
 	// runtime.GOMAXPROCS(runtime.NumCPU())
+
+	tokenStore = make(map[string]time.Time)
 }
 
 func main() {
 	imagick.Initialize()
 	defer imagick.Terminate()
 
+	// Start chunking workers
 	imagesChan := make(chan []byte)
-
 	for i := 0; i < chunkersCnt; i++ {
 		go scheduleChunking(imagesChan)
 	}
+
+	// Start token store cleaner
+	go tokenStoreCleaner(time.Tick(tokenCleanup))
 
 	// Serve Assets
 	http.Handle("/css/", http.FileServer(http.Dir("./assets")))
 	http.Handle("/js/", http.FileServer(http.Dir("./assets")))
 	http.Handle("/fonts/", http.FileServer(http.Dir("./assets")))
 
-	// TODO: check for / without suffix
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "POST":
@@ -274,4 +313,16 @@ func main() {
 
 	log.Println("Server started")
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+type ErrTokenNotFound string
+
+func (e ErrTokenNotFound) Error() string {
+	return fmt.Sprintf("Token '%s' not found", string(e))
+}
+
+type ErrTokenExpired string
+
+func (e ErrTokenExpired) Error() string {
+	return fmt.Sprintf("Token '%s' expired", string(e))
 }
